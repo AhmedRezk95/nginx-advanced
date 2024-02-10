@@ -1,9 +1,8 @@
 # Nginx
 
-Created: February 4, 2024 1:10 PM
-Class: AWS
-Type: Lecture
-Reviewed: No
+Class: Web Server
+Type: Recap
+Reviewed: Yes
 Created by: ahmed rizk
 
 ```groovy
@@ -542,4 +541,579 @@ http {
 
 ### FastCGI Cache:
 
+[](https://pwcanalytics.udemy.com/course/nginx-fundamentals/learn/lecture/10615290#learning-tools)
+
 - Nginx micro → simple server side cache that allow to store dynamic responses
+- to test it → use Apache Bench
+
+```groovy
+
+apt update
+apt-get install apache2-utils
+ab
+# Test it with 10 requests with 10 concurrent connections level
+ab -n <REQUEST_NUMBERS> -c <CONNECTION_NUMBERS> IP_REQUEST
+```
+
+- Example:
+
+```groovy
+user www-data;
+
+worker_processes auto;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+
+  include mime.types;
+
+  # Configure microcache (fastcgi)
+  fastcgi_cache_path /tmp/nginx_cache levels=1:2 keys_zone=ZONE_1:100m inactive=60m;
+  fastcgi_cache_key "$scheme$request_method$host$request_uri";
+  add_header X-Cache $upstream_cache_status;
+
+  server {
+
+    listen 80;
+    server_name 167.99.93.26;
+
+    root /sites/demo;
+
+    index index.php index.html;
+
+    # Cache by default
+    set $no_cache 0;
+
+    # Check for cache bypass
+    if ($arg_skipcache = 1) {
+      set $no_cache 1;
+    }
+
+    location / {
+      try_files $uri $uri/ =404;
+    }
+
+    location ~\.php$ {
+      # Pass php requests to the php-fpm service (fastcgi)
+      include fastcgi.conf;
+      fastcgi_pass unix:/run/php/php7.1-fpm.sock;
+
+      # Enable cache
+      fastcgi_cache ZONE_1;
+      fastcgi_cache_valid 200 60m;
+      fastcgi_cache_bypass $no_cache;
+      fastcgi_no_cache $no_cache;
+    }
+
+  }
+}
+```
+
+### HTTP 2
+
+- Binary Protocol unlike http1 text protocol
+- Compressed headers
+- Persistent Connections
+- Multiplex Streaming → (CSS,JS) can be compained over a single binary data and transmitted over single connection
+- Server push → client/browser can be informed with assets along with intial request
+- A requirement of Http2 is *SSL or Https*
+- Steps:
+    - Add http2 module to nginx configurations
+    - - -with-http-v2-module
+    
+    ![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/7075d73c-eda3-4ecb-af0b-a3aaa03934a4/Untitled.png)
+    
+    ```bash
+    # in order to enable https, you must create ssl certificate
+    mkdir /etc/nginx/ssl
+    # create ssl certificate with expiration of 10 days set the key and certificate into 
+    # /etc/nginx/ssl/ with names self.key and self.crt
+    openssl req -x509 -days 10 -nodes -newkey rsa:2048 -keyout /etc/nginx/ssl/self.key -out /etc/nginx/ssl/self.crt
+    ```
+    
+
+![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/8b36cea4-005e-4651-a65f-964ea688170b/Untitled.png)
+
+nginx.config
+
+```bash
+user www-data;
+
+worker_processes auto;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+
+  include mime.types;
+
+  server {
+
+		# add port 443 for https and ssl with http2 protocol
+    # for VM please open inbound rule for 443
+    listen 443 ssl http2;
+    server_name 172.210.49.88;
+
+    root /sites/demo;
+
+    index index.php index.html;
+
+		# set the path of ssl key and certificate
+    # it will not conside as a secure option as it is ssl self signed cert
+    ssl_certificate /etc/nginx/ssl/self.crt;
+    ssl_certificate_key /etc/nginx/ssl/self.key;
+
+    location / {
+      try_files $uri $uri/ =404;
+    }
+
+    location ~\.php$ {
+      # Pass php requests to the php-fpm service (fastcgi)
+      include fastcgi.conf;
+      fastcgi_pass unix:/run/php/php7.4-fpm.sock;
+    }
+
+  }
+}
+```
+
+**Note:** 
+
+- *In case of self-signed SSL, it will not be considered secure but we do it for demo purposes*
+    - if you try to use it in chrome it will automatically redirect to http 1 because ssl is self-signed
+    - the only option to test self-sign using curl -I -K
+
+![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/eedeca8f-e622-48fb-ad78-b8881d31ccfa/Untitled.png)
+
+### Http2: Server Push
+
+[Introducing HTTP/2 Server Push with NGINX 1.13.9 | NGINX](https://www.nginx.com/blog/nginx-1-13-9-http2-server-push/)
+
+- Basically server push is a feature with http2 that lets client/browser can be informed with assets along with intial request
+- in this example we will link css and png of the web site with the intial request of html
+- to test this we will need to setup nghttp2 client
+
+```bash
+apt-get install nghttp2-client -y
+# to test all requests
+# -n: discard responses and not storing in the disk
+# -y: ignore self-signed cert
+# -s: print statistics
+# -a: link all the assets linked to this request
+
+# with all assets
+nghttp -nysa <https://"IP_OR_DOMAIN"/>
+
+# without assets
+nghttp -nys <https://"IP_OR_DOMAIN"/path>
+```
+
+- nginx.conifg
+
+```bash
+user www-data;
+
+worker_processes auto;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+
+  include mime.types;
+
+  server {
+
+    listen 443 ssl http2;
+    server_name 167.99.93.26;
+
+    root /sites/demo;
+
+    index index.php index.html;
+
+    ssl_certificate /etc/nginx/ssl/self.crt;
+    ssl_certificate_key /etc/nginx/ssl/self.key;
+
+		# when the client calls index.html -> service push css and png file with it
+    location = /index.html {
+      http2_push /style.css;
+      http2_push /thumb.png;
+    }
+
+    location / {
+      try_files $uri $uri/ =404;
+    }
+
+    location ~\.php$ {
+      # Pass php requests to the php-fpm service (fastcgi)
+      include fastcgi.conf;
+      fastcgi_pass unix:/run/php/php7.1-fpm.sock;
+    }
+
+  }
+}
+```
+
+![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/15811e9d-11a3-43bd-878e-d16ee5acc485/Untitled.png)
+
+## Security Section
+
+### Https:
+
+Note: SSL is outdated, we recommend to use TLS only
+
+we do this by doing the following:
+
+- Disable SSL and only enable TLS
+- Optimise ssl cipher suits
+- create DH pem and enableing it nginx.config
+    - allows server to exchange between client and server with perfect secrecy
+        
+        ```bash
+        openssl dhparam 2048 -out <WHERE_YOU_SHOULD_SAVE_IT>
+        
+        ```
+        
+- enable HSTS → header tells the browser not to load anything over Http
+- Cache SSL Sessions
+    - enable session cache → shared
+    - enable session tickets → provide a ticket to validate ssl session issued by the server
+
+nginx.config
+
+```bash
+user www-data;
+
+worker_processes auto;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+
+  include mime.types;
+
+  # Redirect all traffic to HTTPS
+  server {
+    listen 80;
+    server_name 167.99.93.26;
+    return 301 https://$host$request_uri;
+  }
+
+  server {
+
+    listen 443 ssl http2;
+    server_name 167.99.93.26;
+
+    root /sites/demo;
+
+    index index.html;
+
+    ssl_certificate /etc/nginx/ssl/self.crt;
+    ssl_certificate_key /etc/nginx/ssl/self.key;
+
+    # Disable SSL
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+
+    # Optimise cipher suits
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+
+    # Enable DH Params
+    ssl_dhparam /etc/nginx/ssl/dhparam.pem;
+
+    # Enable HSTS
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # SSL sessions
+    ssl_session_cache shared:SSL:40m;
+    ssl_session_timeout 4h;
+    ssl_session_tickets on;
+
+    location / {
+      try_files $uri $uri/ =404;
+    }
+
+    location ~\.php$ {
+      # Pass php requests to the php-fpm service (fastcgi)
+      include fastcgi.conf;
+      fastcgi_pass unix:/run/php/php7.1-fpm.sock;
+    }
+
+  }
+}
+```
+
+### Rate Limiting:
+
+[](https://pwcanalytics.udemy.com/course/nginx-fundamentals/learn/lecture/10617504#questions)
+
+- Managing incoming connections to the server for reason as:
+    - Brutle Force Protectiong
+    - Prevent traffic spikes
+    - Service Priority
+- To test server rate limiting using tool called “Siege” load testing tool
+
+```bash
+apt-get install siege
+
+# verbose logging run 2 test on 5 concurrent connections
+siege -v -r 2 -c 5 <request>
+```
+
+![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/def9c81d-29a4-4366-a503-1681cdee7247/Untitled.png)
+
+- Steps:
+    - define limit zone
+    - set limit to a location
+    
+    ```bash
+    user www-data;
+    
+    worker_processes auto;
+    
+    events {
+      worker_connections 1024;
+    }
+    
+    http {
+    
+      include mime.types;
+    
+      # Define limit zone
+      limit_req_zone $request_uri zone=MYZONE:10m rate=1r/s;
+    
+      # Redirect all traffic to HTTPS
+      server {
+        listen 80;
+        server_name 167.99.93.26;
+        return 301 https://$host$request_uri;
+      }
+    
+      server {
+    
+        listen 443 ssl http2;
+        server_name 167.99.93.26;
+    
+        root /sites/demo;
+    
+        index index.html;
+    
+        ssl_certificate /etc/nginx/ssl/self.crt;
+        ssl_certificate_key /etc/nginx/ssl/self.key;
+    
+        # Disable SSL
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    
+        # Optimise cipher suits
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+    
+        # Enable DH Params
+        ssl_dhparam /etc/nginx/ssl/dhparam.pem;
+    
+        # Enable HSTS
+        add_header Strict-Transport-Security "max-age=31536000" always;
+    
+        # SSL sessions
+        ssl_session_cache shared:SSL:40m;
+        ssl_session_timeout 4h;
+        ssl_session_tickets on;
+    
+        location / {
+          limit_req zone=MYZONE burst=5 nodelay;
+          try_files $uri $uri/ =404;
+        }
+    
+        location ~\.php$ {
+          # Pass php requests to the php-fpm service (fastcgi)
+          include fastcgi.conf;
+          fastcgi_pass unix:/run/php/php7.1-fpm.sock;
+        }
+    
+      }
+    }
+    ```
+    
+
+### Basic Auth
+
+- Providing simple username and password layer
+    - generate password in .htpasswd
+    - add  auth_basic and auth_basic_user*_*file
+    
+    ```bash
+    apt-get install apache2-utils
+    
+    # create password for user "rizk"
+    htpasswd -c /etc/nginx/.htpasswd rizk
+    
+    ```
+    
+    nginx.config
+    
+    ```bash
+    user www-data;
+    
+    worker_processes auto;
+    
+    events {
+      worker_connections 1024;
+    }
+    
+    http {
+    
+      include mime.types;
+    
+      # Define limit zone
+      limit_req_zone $request_uri zone=MYZONE:10m rate=1r/s;
+    
+      # Redirect all traffic to HTTPS
+      server {
+        listen 80;
+        server_name 167.99.93.26;
+        return 301 https://$host$request_uri;
+      }
+    
+      server {
+    
+        listen 443 ssl http2;
+        server_name 167.99.93.26;
+    
+        root /sites/demo;
+    
+        index index.html;
+    
+        ssl_certificate /etc/nginx/ssl/self.crt;
+        ssl_certificate_key /etc/nginx/ssl/self.key;
+    
+        # Disable SSL
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    
+        # Optimise cipher suits
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+    
+        # Enable DH Params
+        ssl_dhparam /etc/nginx/ssl/dhparam.pem;
+    
+        # Enable HSTS
+        add_header Strict-Transport-Security "max-age=31536000" always;
+    
+        # SSL sessions
+        ssl_session_cache shared:SSL:40m;
+        ssl_session_timeout 4h;
+        ssl_session_tickets on;
+    
+        location / {
+    			# FOR AUTH ADD TEXT AND PATH OF htpasswd
+          auth_basic "Secure Area";
+          auth_basic_user_file /etc/nginx/.htpasswd;
+    
+          try_files $uri $uri/ =404;
+        }
+    
+      }
+    }
+    ```
+    
+    ![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/62507ca7-49b9-466f-a316-922da6c8e3b4/af70d084-8a2c-4078-a486-9ac3d023f554/Untitled.png)
+    
+
+### Nginx Harden:
+
+- set server_token off → To make client not knowing your nginx version
+- securing our NGINX install by **removing unused default module**
+
+## Reverse Proxy and Load Balancer:
+
+- Reverse Proxy:
+    
+    [NGINX Reverse Proxy](https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/)
+    
+    [Module ngx_http_proxy_module](http://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+    
+    nginx.config
+    
+    ```bash
+    events {}
+    
+    http {
+    
+      server {
+    
+        listen 8888;
+    
+        location /  {
+          return 200 "Hello User\n";
+        }
+    
+        location /php {
+    
+         # add proxy header
+         proxy_set_header pro zoka;
+         # add header
+         add_header proxied rizk;
+         # reverse proxy to localhost:8000
+         proxy_pass 'http://localhost:8000/';
+        }
+    
+      }
+    }
+    ```
+    
+- Loadbalancer:
+    
+    [HTTP Load Balancing](https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/)
+    
+    [Using nginx as HTTP load balancer](http://nginx.org/en/docs/http/load_balancing.html)
+    
+    - Steps:
+        - add upstream with server collection
+        - proxy_pass to the upstream
+        
+        ```bash
+        events {}
+        
+        http {
+            # we have created three servers on the local host with the following ports 
+            # php -S localhost:10001 s1
+            # php -S localhost:10002 s2
+            # php -S localhost:10003 s3
+        
+            # For the load balancer
+        		# Step1
+            # add server collection 
+            upstream phps {
+              server localhost:10001;
+              server localhost:10002;
+              server localhost:10003;
+            }
+        
+          server {
+            listen 8888;
+            location / {
+        			# Step2
+              # reverse proxy to collection of servers "loadbalancer"
+              proxy_pass http://phps;
+            }
+          }
+        }
+        ```
+        
+        ## References that may help:
+        
+        https://github.com/fcambus/nginx-resources
+        
+        [nginx documentation](http://nginx.org/en/docs/)
+        
+        [Pitfalls and Common Mistakes | NGINX](https://www.nginx.com/resources/wiki/start/topics/tutorials/config_pitfalls/)
+        
+        [Nginx – Advanced Administration Handbook | Developer.WordPress.org](https://developer.wordpress.org/advanced-administration/server/web-server/nginx/)
